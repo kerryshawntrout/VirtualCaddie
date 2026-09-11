@@ -1,0 +1,21 @@
+{
+  "short_name": "AI Caddie",
+  "name": "Hands-Free AI Caddie & Scorekeeper",
+  "icons": [
+    {
+      "src": "aii.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    },
+    {
+      "src": "aii.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "./index.html",
+  "background_color": "#12181b",
+  "theme_color": "#2ecc71",
+  "display": "standalone",
+  "orientation": "portrait"
+}
