@@ -2,16 +2,18 @@
 // 1. STATE MANAGEMENT & LOCAL STORAGE DEFAULTS
 // ==========================================
 const DEFAULT_CLUBS = [
-  { name: "Driver", distance: 250, hits: 0 },
-  { name: "3-Wood", distance: 220, hits: 0 },
-  { name: "4-Iron", distance: 190, hits: 0 },
-  { name: "5-Iron", distance: 180, hits: 0 },
-  { name: "6-Iron", distance: 170, hits: 0 },
-  { name: "7-Iron", distance: 160, hits: 0 },
-  { name: "8-Iron", distance: 150, hits: 0 },
-  { name: "9-Iron", distance: 140, hits: 0 },
-  { name: "Pitching Wedge", distance: 125, hits: 0 },
-  { name: "Sand Wedge", distance: 100, hits: 0 }
+  { name: "Driver", distance: 220, hits: 0 },
+  { name: "5-Wood", distance: 200, hits: 0 },
+  { name: "3-Hybrid", distance: 190, hits: 0 },
+  { name: "5-Iron", distance: 170, hits: 0 },
+  { name: "6-Iron", distance: 160, hits: 0 },
+  { name: "7-Iron", distance: 150, hits: 0 },
+  { name: "8-Iron", distance: 140, hits: 0 },
+  { name: "9-Iron", distance: 130, hits: 0 },
+  { name: "Pitching Wedge", distance: 120, hits: 0 },
+  { name: "Gap Wedge", distance: 110, hits: 0 },
+  { name: "Sand Wedge", distance: 80, hits: 0 },
+  { name: "Lob Wedge", distance: 60, hits: 0 }
 ];
 
 let clubDatabase = JSON.parse(localStorage.getItem('caddie_clubs')) || DEFAULT_CLUBS;
@@ -26,11 +28,11 @@ let roundHistory = JSON.parse(localStorage.getItem('caddie_rounds')) || [];
 let currentHole = 1;
 let currentHolePar = 4;
 let currentHoleStrokes = 0;
-let completedHoles = []; // Stores individual hole objects { hole, par, strokes }
+let completedHoles = []; 
 
-// GPS Target Point
+// GPS & Course State
 let targetPin = { lat: 40.440624, lng: -79.995888 }; 
-let hazardFrontLeft = true; 
+let currentCourseData = null; // Stored OSM course features
 
 let currentPos = null;
 let playsLikeDistYards = 0;
@@ -62,7 +64,7 @@ async function initCaddie() {
   document.getElementById('startBtn').style.display = 'none';
   updateStatus("Voice Listening Active", true);
 
-  // 1. Activate Screen Wake Lock automatically on user tap
+  // 1. Activate Screen Wake Lock automatically
   await requestWakeLock();
 
   // 2. Continuous GPS Geolocation
@@ -105,27 +107,18 @@ function initVoiceEngine() {
 }
 
 function parseVoiceCommand(speech) {
-  // --- PAR SETTING COMMANDS ---
+  // Par Settings
   if (speech.includes("par 3") || speech.includes("par three")) {
-    currentHolePar = 3;
-    updateScoreUI();
-    speakFeedback(`Hole ${currentHole} set to Par 3.`);
-    return;
+    currentHolePar = 3; updateScoreUI(); speakFeedback(`Hole ${currentHole} set to Par 3.`); return;
   }
   if (speech.includes("par 4") || speech.includes("par four")) {
-    currentHolePar = 4;
-    updateScoreUI();
-    speakFeedback(`Hole ${currentHole} set to Par 4.`);
-    return;
+    currentHolePar = 4; updateScoreUI(); speakFeedback(`Hole ${currentHole} set to Par 4.`); return;
   }
   if (speech.includes("par 5") || speech.includes("par five")) {
-    currentHolePar = 5;
-    updateScoreUI();
-    speakFeedback(`Hole ${currentHole} set to Par 5.`);
-    return;
+    currentHolePar = 5; updateScoreUI(); speakFeedback(`Hole ${currentHole} set to Par 5.`); return;
   }
 
-  // --- SCORE STROKE COMMANDS ---
+  // Stroke Logging
   if (speech.includes("add stroke") || speech.includes("count shot") || speech.includes("add shot")) {
     currentHoleStrokes++;
     updateScoreUI();
@@ -133,81 +126,43 @@ function parseVoiceCommand(speech) {
     return;
   }
 
-  // --- HOLE COMPLETION COMMANDS ---
+  // Hole Completion
   if (speech.includes("next hole") || speech.includes("finish hole") || speech.includes("hole complete")) {
-    completedHoles.push({
-      hole: currentHole,
-      par: currentHolePar,
-      strokes: currentHoleStrokes
-    });
-
+    completedHoles.push({ hole: currentHole, par: currentHolePar, strokes: currentHoleStrokes });
     const relText = getRelativeScoreSpeech(completedHoles);
     speakFeedback(`Hole ${currentHole} logged with ${currentHoleStrokes} strokes. You are currently ${relText}. Moving to hole ${currentHole + 1}.`);
 
     currentHole++;
     currentHoleStrokes = 0;
-    currentHolePar = 4; // Reset default Par 4 for next hole
+    currentHolePar = 4;
     updateScoreUI();
     return;
   }
 
-  // --- SCORE INQUIRY COMMANDS ---
+  // Score Inquiry
   if (speech.includes("what's my score") || speech.includes("current score") || speech.includes("total score")) {
     const relText = getRelativeScoreSpeech(completedHoles, currentHoleStrokes, currentHolePar);
     speakFeedback(`You are on hole ${currentHole} with ${currentHoleStrokes} strokes. Overall you are ${relText}.`);
     return;
   }
 
-  // --- ROUND COMPLETION COMMAND ---
-  if (speech.includes("finish round") || speech.includes("end round") || speech.includes("save round")) {
-    if (completedHoles.length === 0 && currentHoleStrokes > 0) {
-      completedHoles.push({ hole: currentHole, par: currentHolePar, strokes: currentHoleStrokes });
-    }
-
-    saveRoundToHistory();
-    const totalStrokes = completedHoles.reduce((acc, h) => acc + h.strokes, 0);
-    const totalPar = completedHoles.reduce((acc, h) => acc + h.par, 0);
-    const diff = totalStrokes - totalPar;
-    const finalRel = diff === 0 ? "Even par" : `${Math.abs(diff)} ${diff > 0 ? 'over' : 'under'}`;
-
-    speakFeedback(`Round saved to history. You completed ${completedHoles.length} holes with ${totalStrokes} gross strokes, finishing ${finalRel}.`);
-    
-    // Reset round state
-    currentHole = 1;
-    currentHoleStrokes = 0;
-    completedHoles = [];
-    updateScoreUI();
-    return;
-  }
-
-  // --- DISTANCE & RECOMMENDATION COMMANDS ---
+  // Distance & Club Advice
   if (speech.includes("caddie") || speech.includes("club") || speech.includes("distance") || speech.includes("play")) {
     speakRecommendation();
     return;
   }
 
-  // --- SHOT LOGGING COMMANDS ---
+  // Shot Performance Logs
   if (speech.includes("good shot") || speech.includes("in target") || speech.includes("hit green")) {
-    currentHoleStrokes++;
-    logShot('hit');
-    updateScoreUI();
-    speakFeedback(`Target hit logged. Stroke ${currentHoleStrokes} counted.`);
-  } 
-  else if (speech.includes("short") || speech.includes("came up short")) {
-    logShot('short');
-    speakFeedback("Logged short miss. Adjusting club yardages up.");
-  } 
-  else if (speech.includes("long") || speech.includes("flew long")) {
-    logShot('long');
-    speakFeedback("Logged long miss. Adjusting club yardages down.");
-  } 
-  else if (speech.includes("left") || speech.includes("missed left") || speech.includes("pulled it")) {
-    logShot('left');
-    speakFeedback("Logged left miss. Updating draw bias.");
-  } 
-  else if (speech.includes("right") || speech.includes("missed right") || speech.includes("pushed it")) {
-    logShot('right');
-    speakFeedback("Logged right miss. Updating fade bias.");
+    currentHoleStrokes++; logShot('hit'); updateScoreUI(); speakFeedback(`Target hit logged. Stroke ${currentHoleStrokes} counted.`);
+  } else if (speech.includes("short")) {
+    logShot('short'); speakFeedback("Logged short miss. Adjusting club yardages up.");
+  } else if (speech.includes("long")) {
+    logShot('long'); speakFeedback("Logged long miss. Adjusting club yardages down.");
+  } else if (speech.includes("left")) {
+    logShot('left'); speakFeedback("Logged left miss. Updating draw bias.");
+  } else if (speech.includes("right")) {
+    logShot('right'); speakFeedback("Logged right miss. Updating fade bias.");
   }
 }
 
@@ -220,37 +175,101 @@ async function onPositionUpdate(position) {
     lng: position.coords.longitude
   };
 
-  const rawYards = calculateHaversineDistanceYards(currentPos, targetPin);
-  document.getElementById('rawDistance').innerText = `${Math.round(rawYards)} yd`;
+  // 1. Fetch dynamic OpenStreetMap course data once GPS locks on
+  if (!currentCourseData) {
+    currentCourseData = await fetchLocalCourseFeatures(currentPos.lat, currentPos.lng);
+  }
 
-  try {
-    const [elevDiff, windData] = await Promise.all([
-      getElevationDiffMeters(currentPos, targetPin),
-      getWindData(currentPos)
-    ]);
+  // 2. Compute Front, Center, & Back distances if green data is available
+  if (currentCourseData && currentCourseData.nearestGreen) {
+    const green = currentCourseData.nearestGreen;
+    const distances = getGreenDistances(currentPos, green.boundary);
 
-    const elevAdjustYards = elevDiff * 1.09361; 
-    const windAdjustYards = calculateWindAdjustment(currentPos, targetPin, windData, rawYards);
+    if (distances) {
+      targetPin = distances.centerPos;
 
-    playsLikeDistYards = Math.round(rawYards + elevAdjustYards + windAdjustYards + playerProfile.distanceBias);
+      // Update UI distance elements if they exist
+      const frontElem = document.getElementById('frontDist');
+      const centerElem = document.getElementById('centerDist');
+      const backElem = document.getElementById('backDist');
+      
+      if (frontElem) frontElem.innerText = `${distances.front} yd`;
+      if (centerElem) centerElem.innerText = `${distances.center} yd`;
+      if (backElem) backElem.innerText = `${distances.back} yd`;
 
-    const strategy = runCourseManagementEngine(playsLikeDistYards, rawYards);
+      const rawYards = distances.center;
+      const rawElem = document.getElementById('rawDistance');
+      if (rawElem) rawElem.innerText = `${Math.round(rawYards)} yd`;
+
+      try {
+        const [elevDiff, windData] = await Promise.all([
+          getElevationDiffMeters(currentPos, targetPin),
+          getWindData(currentPos)
+        ]);
+
+        const elevAdjustYards = elevDiff * 1.09361; 
+        const windAdjustYards = calculateWindAdjustment(currentPos, targetPin, windData, rawYards);
+
+        playsLikeDistYards = Math.round(rawYards + elevAdjustYards + windAdjustYards + playerProfile.distanceBias);
+
+        // Course-Aware Strategy Execution
+        const strategy = runCourseManagementEngine(
+          currentPos, 
+          targetPin, 
+          rawYards, 
+          playsLikeDistYards, 
+          currentCourseData
+        );
+        
+        recommendedClubObj = getBestClub(strategy.targetDistance);
+        currentStrategy = strategy.advice;
+
+        document.getElementById('playsLike').innerText = `${playsLikeDistYards} yd`;
+        document.getElementById('recommendedClub').innerText = `Club: ${recommendedClubObj.name}`;
+        document.getElementById('strategyAdvice').innerText = strategy.advice;
+        document.getElementById('elevDiff').innerText = `${Math.round(elevAdjustYards)} yd`;
+        document.getElementById('windInfo').innerText = `${Math.round(windData.speed)} mph @ ${windData.direction}°`;
+
+      } catch (err) {
+        console.warn("API Error - Falling back to center distance strategy:", err);
+        playsLikeDistYards = Math.round(rawYards);
+        
+        const strategy = runCourseManagementEngine(
+          currentPos, 
+          targetPin, 
+          rawYards, 
+          playsLikeDistYards, 
+          currentCourseData
+        );
+
+        recommendedClubObj = getBestClub(strategy.targetDistance);
+        currentStrategy = strategy.advice;
+        
+        document.getElementById('playsLike').innerText = `${playsLikeDistYards} yd`;
+        document.getElementById('recommendedClub').innerText = `Club: ${recommendedClubObj.name}`;
+        document.getElementById('strategyAdvice').innerText = strategy.advice;
+      }
+    }
+  } else {
+    // Fallback if no OpenStreetMap green boundary is mapped nearby
+    const rawYards = calculateHaversineDistanceYards(currentPos, targetPin);
+    document.getElementById('rawDistance').innerText = `${Math.round(rawYards)} yd`;
+    playsLikeDistYards = Math.round(rawYards);
+    
+    const strategy = runCourseManagementEngine(
+      currentPos, 
+      targetPin, 
+      rawYards, 
+      playsLikeDistYards, 
+      null
+    );
+
     recommendedClubObj = getBestClub(strategy.targetDistance);
     currentStrategy = strategy.advice;
 
     document.getElementById('playsLike').innerText = `${playsLikeDistYards} yd`;
     document.getElementById('recommendedClub').innerText = `Club: ${recommendedClubObj.name}`;
     document.getElementById('strategyAdvice').innerText = strategy.advice;
-    document.getElementById('elevDiff').innerText = `${Math.round(elevAdjustYards)} yd`;
-    document.getElementById('windInfo').innerText = `${Math.round(windData.speed)} mph @ ${windData.direction}°`;
-
-  } catch (err) {
-    console.error("API Error - Falling back to raw GPS distance:", err);
-    playsLikeDistYards = Math.round(rawYards);
-    recommendedClubObj = getBestClub(playsLikeDistYards);
-    
-    document.getElementById('playsLike').innerText = `${playsLikeDistYards} yd`;
-    document.getElementById('recommendedClub').innerText = `Club: ${recommendedClubObj.name}`;
   }
 }
 
@@ -268,7 +287,6 @@ async function requestWakeLock() {
   }
 }
 
-// Re-acquire Wake Lock automatically if switching back to the app tab during a round
 document.addEventListener('visibilitychange', async () => {
   if (wakeLock !== null && document.visibilityState === 'visible') {
     await requestWakeLock();
@@ -276,30 +294,67 @@ document.addEventListener('visibilitychange', async () => {
 });
 
 // ==========================================
-// 6. STRATEGY & SHOT LOGGING
+// 6. COURSE-AWARE STRATEGY & SHOT LOGGING
 // ==========================================
-function runCourseManagementEngine(playsLikeYards, rawYards) {
+function runCourseManagementEngine(userPos, targetPin, rawYards, playsLikeYards, courseData) {
   let targetDistance = playsLikeYards;
-  let advice = "";
+  let advice = [];
 
+  // 1. Standard Distance Logic
   if (rawYards > 120) {
-    advice = "Aim for center of green. Ignore tucked pin locations.";
+    advice.push("Aim for the center of the green to maximize your margin for error.");
   } else {
-    advice = "In wedge range. Attack pin directly.";
+    advice.push("You're in wedge range — attack the pin directly.");
   }
 
-  if (hazardFrontLeft && rawYards > 130) {
-    targetDistance += 5; 
-    advice += " Hazard front-left. Aim center-right (+5yd depth safety margin).";
+  // 2. Dynamic Course Analysis (OpenStreetMap Hazard Data)
+  if (courseData && userPos && targetPin) {
+    const headingToPin = calculateHeading(userPos, targetPin);
+
+    // Analyze Bunkers
+    if (courseData.bunkers && courseData.bunkers.length > 0) {
+      courseData.bunkers.forEach(bunker => {
+        const distToBunker = calculateHaversineDistanceYards(userPos, bunker.center);
+        // Look for bunkers near the approach target (within 30 yards)
+        if (Math.abs(distToBunker - rawYards) < 30) {
+          const bunkerHeading = calculateHeading(userPos, bunker.center);
+          const relativeAngle = ((bunkerHeading - headingToPin + 540) % 360) - 180;
+
+          if (relativeAngle < -10) {
+            advice.push("Bunker guarding the left side — lean toward the right center.");
+          } else if (relativeAngle > 10) {
+            advice.push("Bunker guarding the right side — favor the left side of the green.");
+          } else if (distToBunker < rawYards) {
+            targetDistance += 5; // Add depth safety
+            advice.push("Short bunker detected — take extra club to clear it safely.");
+          }
+        }
+      });
+    }
+
+    // Analyze Water Hazards
+    if (courseData.hazards && courseData.hazards.length > 0) {
+      courseData.hazards.forEach(hazard => {
+        const distToWater = calculateHaversineDistanceYards(userPos, hazard.center);
+        if (Math.abs(distToWater - rawYards) < 40) {
+          targetDistance += 7;
+          advice.push("Water in play near the target — playing it conservative with extra yardage.");
+        }
+      });
+    }
   }
 
+  // 3. Player Bias Adjustments
   if (playerProfile.lateralBias > 2) {
-    advice += " Adjusting for stock fade: aim 8 yards left of target.";
+    advice.push("Account for your stock fade: aim 8 yards left of your target.");
   } else if (playerProfile.lateralBias < -2) {
-    advice += " Adjusting for stock draw: aim 8 yards right of target.";
+    advice.push("Account for your stock draw: aim 8 yards right of your target.");
   }
 
-  return { targetDistance, advice };
+  return {
+    targetDistance,
+    advice: advice.join(" ")
+  };
 }
 
 function logShot(type) {
@@ -426,6 +481,9 @@ function speakFeedback(message) {
   window.speechSynthesis.speak(utterance);
 }
 
+// ==========================================
+// 8. MATH & TELEMETRY HELPERS
+// ==========================================
 function calculateHaversineDistanceYards(pos1, pos2) {
   const R = 6371e3;
   const rad = Math.PI / 180;
@@ -478,3 +536,13 @@ function updateStatus(text, isActive) {
     else badge.classList.remove('active');
   }
 }
+
+// ==========================================
+// 9. OPENSTREETMAP & GREEN BOUNDARY FETCH
+// ==========================================
+async function fetchLocalCourseFeatures(lat, lng) {
+  const overpassQuery = `
+    [out:json][timeout:25];
+    (
+      node["golf"](around:3000, ${lat}, ${lng});
+      
